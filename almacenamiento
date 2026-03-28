@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+import os
+import sys
+import shutil
+
+def get_size_format(b, factor=1024, suffix="B"):
+    for unit in ["", "K", "M", "G", "T", "P"]:
+        if b < factor:
+            return f"{b:.2f} {unit}{suffix}"
+        b /= factor
+    return f"{b:.2f} Y{suffix}"
+
+def analyze_directory(start_path):
+    start_path = os.path.abspath(start_path)
+    total, used, free = shutil.disk_usage(start_path)
+    free_percentage = (free / total) * 100
+    print(f"\n💾 ESTADO DEL DISCO:")
+    print(f"Total: {get_size_format(total)} | Usado: {get_size_format(used)} | Libre: {get_size_format(free)} ({free_percentage:.1f}% restan)")
+    
+    print(f"\n🔍 Analizando espacio en: {start_path} ...")
+    
+    file_sizes = []
+    dir_sizes_map = {}
+    
+    scanned_files = 0
+    scanned_bytes = 0
+    
+    try:
+        passthrough_dirs = set()
+        for dirpath, dirnames, filenames in os.walk(start_path, topdown=False):
+            dir_size = 0
+            
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                if not os.path.islink(fp):
+                    try:
+                        f_size = os.path.getsize(fp)
+                        dir_size += f_size
+                        file_sizes.append((f_size, fp))
+                        scanned_files += 1
+                        scanned_bytes += f_size
+                        if scanned_files % 100 == 0:
+                            sys.stdout.write(f"\r⏳ Escaneando: {scanned_files} archivos encontrados ({get_size_format(scanned_bytes)})")
+                            sys.stdout.flush()
+                    except (PermissionError, OSError):
+                        pass
+            
+            max_child_size = 0
+            for d in dirnames:
+                dp = os.path.join(dirpath, d)
+                if dp in dir_sizes_map:
+                    child_size = dir_sizes_map[dp]
+                    dir_size += child_size
+                    if child_size > max_child_size:
+                        max_child_size = child_size
+                        
+            if dir_size > 0 and (max_child_size / dir_size) > 0.7:
+                passthrough_dirs.add(dirpath)
+                    
+            dir_sizes_map[dirpath] = dir_size
+            
+        sys.stdout.write(f"\r✅ Escaneo completado: {scanned_files} archivos analizados ({get_size_format(scanned_bytes)})".ljust(80) + "\n")
+        sys.stdout.flush()
+    except Exception as e:
+        print(f"\nError al escanear: {e}")
+        
+    dir_sizes = [(size, path) for path, size in dir_sizes_map.items() if path not in passthrough_dirs]
+    file_sizes.sort(key=lambda x: x[0], reverse=True)
+    dir_sizes.sort(key=lambda x: x[0], reverse=True)
+    
+    print("\n" + "="*50)
+    print("📁 TOP 20 CARPETAS MÁS PESADAS")
+    print("="*50)
+    count = 0
+    for size, path in dir_sizes:
+        if path == start_path:
+            continue
+        print(f"{get_size_format(size):>10} | \"{path}\"")
+        count += 1
+        if count >= 20: break
+
+    print("\n" + "="*50)
+    print("📄 TOP 25 ARCHIVOS MÁS PESADOS")
+    print("="*50)
+    for size, path in file_sizes[:25]:
+        print(f"{get_size_format(size):>10} | \"{path}\"")
+        
+    print("\n💡 Tip: Fíjate si alguna carpeta problemática se llama '.git'. Si fue un error, puedes borrarla con: rm -rf /ruta/al/.git\n")
+
+if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        target = " ".join(sys.argv[1:])
+    else:
+        target = os.path.expanduser('~')
+        
+    target = os.path.expanduser(target)
+    
+    # Corregir error común de autocompletado duplicando carpeta de usuario
+    if target.startswith(f"{os.path.expanduser('~')}/Users/"):
+        target = target.replace(f"{os.path.expanduser('~')}/Users/", "/Users/")
+        
+    if not os.path.exists(target):
+        print(f"\n❌ Error: La ruta '{target}' no existe o está mal escrita.")
+    else:
+        analyze_directory(target)
